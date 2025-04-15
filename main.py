@@ -9,13 +9,15 @@ import json
 # Pillow
 from PIL import Image
 
-# Google Gemini
-from google import generativeai as genai
-from google.generativeai.types import GenerationConfig
+# Google Gen AI SDK
+# (以前の from google.generativeai.types import GenerationConfig は削除し、
+#  代わりに from google.genai import types を使う)
+from google import genai
+from google.genai import types
 
 app = FastAPI()
 
-# 若你只想允許在 http://aiharajudge.site 呼叫，就改成 allow_origins=["http://aiharajudge.site"]
+# CORS 設定（必要に応じて allow_origins を変更）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,11 +25,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1) 讀環境變數
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+# 1) 環境変数からキーを読み込み、Client を初期化
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 2) 自訂輸出 schema：9種ハラスメント(整數) + 総合コメント(字串)
+# 2) 9種ハラスメント(整数) + 総合コメント(文字列) 用の schema
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -58,16 +60,18 @@ RESPONSE_SCHEMA = {
 
 def extract_json(response_text: str):
     """
-    從模型回應中擷取 JSON 物件，支援 markdown code block 或大括號區間。
+    モデル応答から JSON を抽出。Markdown コードブロックや
+    大カッコ {} を探してパースする。
     """
     if not isinstance(response_text, str):
         response_text = str(response_text)
-    # 先找 ```json ... ```
+
+    # ```json ... ``` を検索
     match = re.search(r"```json\s*(\{.*\})\s*```", response_text, re.DOTALL)
     if match:
         json_str = match.group(1)
     else:
-        # 沒有 markdown，則搜最外層 {} 區間
+        # それ以外は先頭の '{' から最後の '}' までを切り出し
         start = response_text.find("{")
         end = response_text.rfind("}")
         if start == -1 or end == -1 or end <= start:
@@ -81,35 +85,24 @@ def extract_json(response_text: str):
 
 @app.post("/check_harassment")
 async def check_harassment(
-    # 最多3張圖片
     images: List[UploadFile] = File(None),
-    # 對話文字
     text: str = Form(...),
 ):
     """
-    接收圖片(0-3) 與對話文字，呼叫 Gemini 產生 JSON，欄位:
-     - パワーハラスメント
-     - スメルハラスメント
-     - カスタマーハラスメント
-     - ハラスメントハラスメント
-     - マタニティハラスメント
-     - リモートハラスメント
-     - テクノロジーハラスメント
-     - セクシュアルハラスメント
-     - モラルハラスメント
-     - 総合コメント
+    最大3枚の画像と会話テキストを受け取り、
+    Gemini 2.0 Flash を使ってハラスメントスコアを JSON で返す。
     """
-    # 1) 收集 contents: 先放圖片
+
+    # 1) 画像を PIL Image に変換して contents に追加
     contents = []
     if images:
         for imgfile in images[:3]:
             if imgfile.content_type.startswith("image/"):
-                # 讀取
                 raw = await imgfile.read()
                 pil_img = Image.open(io.BytesIO(raw))
                 contents.append(pil_img)
 
-    # 2) system_instruction (讓模型理解角色/上下文)
+    # 2) system_instruction (専門家としての振る舞いなど)
     system_instruction = """
 あなたはハラスメントの専門家です。
 入力された写真(0~3枚)と会話内容をもとに分析し、
@@ -137,23 +130,24 @@ async def check_harassment(
   "総合コメント": "XXX"
 }}
 """
-
     contents.append(user_prompt)
 
-    # 4) 呼叫 Gemini
-    response = genai.models.generate_content(
+    # 4) Gemini へのリクエスト
+    #   client.models.generate_content(...) でも client.generate_content(...) でもOK
+    gen_config = types.GenerateContentConfig(
+        temperature=0.3,
+        top_p=0.95,
+        top_k=10,
+        max_output_tokens=512,
+        system_instruction=system_instruction,
+        response_schema=RESPONSE_SCHEMA
+    )
+    response = client.models.generate_content(
         model="gemini-2.0-flash",
         contents=contents,
-        config=GenerationConfig(
-            temperature=0.3,
-            top_p=0.95,
-            top_k=10,
-            max_output_tokens=512,
-            system_instruction=system_instruction,
-            response_schema=RESPONSE_SCHEMA
-        )
+        config=gen_config
     )
 
-    # 5) 從回傳文字中抽取 JSON
+    # 5) 応答を JSON 化
     parsed = extract_json(response.text)
     return parsed
