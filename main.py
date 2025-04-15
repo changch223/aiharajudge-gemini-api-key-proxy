@@ -1,11 +1,21 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import httpx
+from typing import List
 import os
+import io
+import re
+import json
+
+# Pillow
+from PIL import Image
+
+# Google Gemini
+from google import generativeai as genai
+from google.generativeai.types import GenerationConfig
 
 app = FastAPI()
 
+# 若你只想允許在 http://aiharajudge.site 呼叫，就改成 allow_origins=["http://aiharajudge.site"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,74 +23,137 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class InputData(BaseModel):
-    text: str
+# 1) 讀環境變數
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 
-categories = [
-    "パワーハラスメント（パワハラ）",
-    "スメルハラスメント",
-    "カスタマーハラスメント（カスハラ）",
-    "ハラスメントハラスメント（ハラハラ）",
-    "マタニティハラスメント（マタハラ）",
-    "リモートハラスメント（リモハラ）",
-    "テクノロジーハラスメント（テクハラ）",
-    "セクシュアルハラスメント（セクハラ）",
-    "モラルハラスメント（モラハラ）"
-]
+# 2) 自訂輸出 schema：9種ハラスメント(整數) + 総合コメント(字串)
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "パワーハラスメント": {"type": "integer"},
+        "スメルハラスメント": {"type": "integer"},
+        "カスタマーハラスメント": {"type": "integer"},
+        "ハラスメントハラスメント": {"type": "integer"},
+        "マタニティハラスメント": {"type": "integer"},
+        "リモートハラスメント": {"type": "integer"},
+        "テクノロジーハラスメント": {"type": "integer"},
+        "セクシュアルハラスメント": {"type": "integer"},
+        "モラルハラスメント": {"type": "integer"},
+        "総合コメント": {"type": "string"}
+    },
+    "required": [
+        "パワーハラスメント",
+        "スメルハラスメント",
+        "カスタマーハラスメント",
+        "ハラスメントハラスメント",
+        "マタニティハラスメント",
+        "リモートハラスメント",
+        "テクノロジーハラスメント",
+        "セクシュアルハラスメント",
+        "モラルハラスメント",
+        "総合コメント"
+    ]
+}
 
-# Proxy 設定
-PROXY_URL = "https://你的-cloud-run-url/app.p"
-PROXY_TOKEN = os.getenv("PROXY_TOKEN")  # 自訂 token，和 proxy 那邊要一致
+def extract_json(response_text: str):
+    """
+    從模型回應中擷取 JSON 物件，支援 markdown code block 或大括號區間。
+    """
+    if not isinstance(response_text, str):
+        response_text = str(response_text)
+    # 先找 ```json ... ```
+    match = re.search(r"```json\s*(\{.*\})\s*```", response_text, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+    else:
+        # 沒有 markdown，則搜最外層 {} 區間
+        start = response_text.find("{")
+        end = response_text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return {"error": "No valid JSON found in response."}
+        json_str = response_text[start:end+1]
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return {"error": f"JSON decode error: {str(e)}"}
 
 @app.post("/check_harassment")
-async def check_harassment(data: InputData):
-    headers = {
-        "Authorization": f"Bearer {PROXY_TOKEN}",
-        "Content-Type": "application/json"
-    }
+async def check_harassment(
+    # 最多3張圖片
+    images: List[UploadFile] = File(None),
+    # 對話文字
+    text: str = Form(...),
+):
+    """
+    接收圖片(0-3) 與對話文字，呼叫 Gemini 產生 JSON，欄位:
+     - パワーハラスメント
+     - スメルハラスメント
+     - カスタマーハラスメント
+     - ハラスメントハラスメント
+     - マタニティハラスメント
+     - リモートハラスメント
+     - テクノロジーハラスメント
+     - セクシュアルハラスメント
+     - モラルハラスメント
+     - 総合コメント
+    """
+    # 1) 收集 contents: 先放圖片
+    contents = []
+    if images:
+        for imgfile in images[:3]:
+            if imgfile.content_type.startswith("image/"):
+                # 讀取
+                raw = await imgfile.read()
+                pil_img = Image.open(io.BytesIO(raw))
+                contents.append(pil_img)
 
-    # prompt 內容：一樣可以自由調整
-    contents = [{
-        "parts": [{
-            "text": f"""
-あなたはハラスメント専門家です。
-以下のテキストを読み取り、それぞれの種類のハラスメントに該当する可能性を、1〜100でスコアを出してください。
-
-対象テキスト：
-{data.text}
-
-以下の9項目にスコアをお願いします：
-- パワハラ
-- スメハラ
-- カスハラ
-- ハラハラ
-- マタハラ
-- リモハラ
-- テクハラ
-- セクハラ
-- モラハラ
-
-出力は JSON として次のように返してください：
-{{\"パワーハラスメント（パワハラ）\": 数字, ...（略）}}
+    # 2) system_instruction (讓模型理解角色/上下文)
+    system_instruction = """
+あなたはハラスメントの専門家です。
+入力された写真(0~3枚)と会話内容をもとに分析し、
+下記9種ハラスメントを0〜100点で数値化し、
+総合コメントを日本語で出力してください。
+答えは必ずstrictなJSONのみで返してください。
 """
-        }]
-    }]
 
-    payload = {
-        "model_name": "gemini-1.5-flash",
-        "contents": contents,
-        "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 1024
-        }
-    }
+    # 3) user_prompt
+    user_prompt = f"""
+【会話内容】
+{text}
 
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(PROXY_URL, headers=headers, json=payload)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.RequestError as e:
-            return {"error": f"Request failed: {str(e)}"}
-        except httpx.HTTPStatusError as e:
-            return {"error": f"Proxy returned HTTP error {e.response.status_code}: {e.response.text}"}
+出力JSONのフォーマット:
+{{
+  "パワーハラスメント": 0〜100,
+  "スメルハラスメント": 0〜100,
+  "カスタマーハラスメント": 0〜100,
+  "ハラスメントハラスメント": 0〜100,
+  "マタニティハラスメント": 0〜100,
+  "リモートハラスメント": 0〜100,
+  "テクノロジーハラスメント": 0〜100,
+  "セクシュアルハラスメント": 0〜100,
+  "モラルハラスメント": 0〜100,
+  "総合コメント": "XXX"
+}}
+"""
+
+    contents.append(user_prompt)
+
+    # 4) 呼叫 Gemini
+    response = genai.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=contents,
+        config=GenerationConfig(
+            temperature=0.3,
+            top_p=0.95,
+            top_k=10,
+            max_output_tokens=512,
+            system_instruction=system_instruction,
+            response_schema=RESPONSE_SCHEMA
+        )
+    )
+
+    # 5) 從回傳文字中抽取 JSON
+    parsed = extract_json(response.text)
+    return parsed
