@@ -140,8 +140,8 @@ async def check_harassment(
         top_k=10,
         max_output_tokens=512,
         system_instruction=system_instruction,
-        response_schema=RESPONSE_SCHEMA
-        response_mime_type="application/json",  # ✅ 加這一行！
+        response_schema=RESPONSE_SCHEMA,
+        response_mime_type="application/json"  # ✅ 加這一行！
     )
     response = client.models.generate_content(
         model="gemini-2.0-flash",
