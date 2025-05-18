@@ -88,7 +88,7 @@ The Gemini prompt includes:
   "モラルハラスメント": 0,
   "総合コメント": "AI-generated supportive explanation here"
 }
-
+```
 ---
 
 ## 📄 License
