@@ -3,23 +3,23 @@
 A secure and schema-controlled FastAPI backend for detecting harassment types using Google Gemini 2.0 Flash.  
 Supports multi-modal input (text + image) and returns structured JSON scores based on Japanese government guidelines.
 
-🌐 Used in production on [aiharajudge.site](https://aiharajudge.site)  
-🔐 Includes API key validation, referer check, and rate limiting  
-📦 Deployed via Google Cloud Run
+- Used in production on [aiharajudge.site](https://aiharajudge.site)  
+- Includes API key validation, referer check, and rate limiting  
+- Deployed via Google Cloud Run
 
 ---
 
 ## 🚀 Features
 
-- ✅ Accepts up to 3 screenshots + text via `POST /check_harassment`
-- 🤖 Calls Gemini 2.0 Flash via [Google Generative AI Python SDK](https://github.com/google/generative-ai-python)
-- 📊 Returns **strict JSON** with 9 harassment scores and an AI-generated support message
-- 🔐 Includes:
+- Accepts up to 3 screenshots + text via `POST /check_harassment`
+- Calls Gemini 2.0 Flash via [Google Generative AI Python SDK](https://github.com/google/generative-ai-python)
+- Returns **strict JSON** with 9 harassment scores and an AI-generated support message
+- Includes:
   - API key verification (`X-API-Key` header)
   - HTTP Referer check (`aiharajudge.site`)
   - Per-IP rate limiting (10 requests/min)
-- 🧩 Image support via Pillow + Gemini native vision model
-- 📜 Response schema enforced with `response_schema`
+- Image support via Pillow + Gemini native vision model
+- Response schema enforced with `response_schema`
 
 ---
 
