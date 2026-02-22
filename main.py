@@ -236,7 +236,7 @@ async def check_harassment(
         response_mime_type="application/json"
     )
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=contents,
         config=gen_config
     )
