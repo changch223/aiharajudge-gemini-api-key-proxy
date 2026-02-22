@@ -230,17 +230,27 @@ async def check_harassment(
         temperature=0.3,
         top_p=0.95,
         top_k=10,
-        max_output_tokens=512,
+        max_output_tokens=1024, # 余裕を持って増やす
         system_instruction=system_instruction,
         response_schema=RESPONSE_SCHEMA,
-        response_mime_type="application/json"
+        response_mime_type="application/json",
+        # ★ ここを追加：思考プロセスを無効化し、純粋なJSONのみを返させる
+        thinking_config=types.ThinkingConfig(
+            include_thoughts=False,
+            thinking_budget=0
+        )
     )
+    
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=contents,
         config=gen_config
     )
 
-    # 提取並返回模型回應中的 JSON 資料
+    # ★ SDKの自動パース機能を使う方が安全です
+    if response.parsed:
+        return response.parsed
+    
+    # フォールバックとして従来の抽出関数を使用
     parsed = extract_json(response.text)
     return parsed
