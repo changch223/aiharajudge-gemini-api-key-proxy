@@ -12,7 +12,7 @@ Supports multi-modal input (text + image) and returns structured JSON scores bas
 ## 🚀 Features
 
 - Accepts up to 3 screenshots + text via `POST /check_harassment`
-- Calls Gemini 2.0 Flash via [Google Generative AI Python SDK](https://github.com/google/generative-ai-python)
+- Calls Gemini 2.5 Flash via [Google Generative AI Python SDK](https://github.com/google/generative-ai-python)
 - Returns **strict JSON** with 9 harassment scores and an AI-generated support message
 - Includes:
   - API key verification (`X-API-Key` header)
