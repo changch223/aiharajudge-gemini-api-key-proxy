@@ -31,7 +31,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aiharajudge.site"],
+    allow_origins=["https://aiharajudge.site", "https://changch223.github.io"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,7 +57,7 @@ async def check_referer(request: Request):
     檢查 HTTP Referer 是否包含指定域名，若不符合則拒絕請求
     """
     referer = request.headers.get("referer")
-    if referer is None or "aiharajudge.site" not in referer:
+    if referer is None or ("aiharajudge.site" not in referer and "changch223.github.io" not in referer):
         logger.warning("Referer 檢查失敗: %s", referer)
         raise HTTPException(status_code=403, detail="不允許的 Referer")
     return True
